@@ -68,8 +68,24 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
         throw RuntimeException("Coach gaf geen bruikbaar antwoord ($why). Probeer opnieuw of kies in Instellingen een ander model.")
     }
 
-    /** Low-level call to the Anthropic Messages API. */
+    /**
+     * Calls the Anthropic Messages API with streaming, so data keeps flowing and the
+     * connection is not dropped during long answers. Retries up to 2x on network errors.
+     */
     fun call(system: String, messages: JSONArray, maxTokens: Int = 1000): String {
+        var lastErr: Exception? = null
+        for (attempt in 0..2) {
+            try {
+                return callOnce(system, messages, maxTokens)
+            } catch (e: java.io.IOException) {
+                lastErr = e
+                Thread.sleep(1500L * (attempt + 1))
+            }
+        }
+        throw RuntimeException("Geen verbinding met de coach (${lastErr?.message}). Controleer je internet en probeer opnieuw.")
+    }
+
+    private fun callOnce(system: String, messages: JSONArray, maxTokens: Int): String {
         val key = Repo.apiKey
         if (key.isBlank()) throw IllegalStateException("Nog geen API-sleutel ingesteld. Ga naar Instellingen.")
         val con = URL("https://api.anthropic.com/v1/messages").openConnection() as HttpURLConnection
@@ -77,8 +93,9 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 20000
-            con.readTimeout = 240000
+            con.readTimeout = 90000 // max silence between stream events
             con.setRequestProperty("content-type", "application/json")
+            con.setRequestProperty("accept", "text/event-stream")
             con.setRequestProperty("x-api-key", key)
             con.setRequestProperty("anthropic-version", "2023-06-01")
             val body = JSONObject()
@@ -86,21 +103,32 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
                 .put("max_tokens", maxTokens)
                 .put("system", system)
                 .put("messages", messages)
+                .put("stream", true)
             con.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = con.responseCode
-            val stream = if (code in 200..299) con.inputStream else con.errorStream
-            val txt = stream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
             if (code !in 200..299) {
+                val txt = con.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
                 val msg = runCatching { JSONObject(txt).getJSONObject("error").getString("message") }.getOrDefault(txt.take(300))
                 throw RuntimeException("Coach niet bereikbaar ($code): $msg")
             }
-            val resp = JSONObject(txt)
-            lastStop = resp.optString("stop_reason")
-            val arr = resp.getJSONArray("content")
             val sb = StringBuilder()
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                if (o.optString("type") == "text") sb.append(o.getString("text"))
+            lastStop = ""
+            con.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                for (line in lines) {
+                    if (!line.startsWith("data:")) continue
+                    val data = line.substring(5).trim()
+                    if (data.isEmpty() || data == "[DONE]") continue
+                    val o = runCatching { JSONObject(data) }.getOrNull() ?: continue
+                    when (o.optString("type")) {
+                        "content_block_delta" -> {
+                            val d = o.optJSONObject("delta")
+                            if (d?.optString("type") == "text_delta") sb.append(d.optString("text"))
+                        }
+                        "message_delta" -> o.optJSONObject("delta")?.optString("stop_reason")?.let { if (it.isNotBlank() && it != "null") lastStop = it }
+                        "error" -> throw RuntimeException("Coach-fout: " + (o.optJSONObject("error")?.optString("message") ?: data.take(200)))
+                        "message_stop" -> break
+                    }
+                }
             }
             return sb.toString().trim()
         } finally {

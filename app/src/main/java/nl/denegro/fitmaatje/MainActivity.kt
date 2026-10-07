@@ -304,10 +304,10 @@ fun EntryCard(e: Entry) {
 @Composable
 fun PlanScreen() {
     val scope = rememberCoroutineScope()
-    var date by remember { mutableStateOf(LocalDate.now()) }
+    var date by remember { mutableStateOf(Plans.defaultDate()) }
     val plan = Plans.plans[date]
-    var busy by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val busy = Plans.busy.value
+    var error by Plans.error
     var wish by rememberSaveable { mutableStateOf("") }
     var showShop by remember { mutableStateOf(false) }
     val done = Repo.sum(date).moments
@@ -321,22 +321,8 @@ fun PlanScreen() {
     val startWishMic = rememberMicPermission { wishDictation.start() }
     val fmt = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale("nl"))
 
-    fun run(label: String, block: () -> Unit) {
-        if (busy != null) return
-        busy = label; error = null
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching(block) }
-            busy = null
-            r.onFailure { error = it.message ?: "Er ging iets mis" }
-        }
-    }
-
-    // Make today's plan automatically the first time the screen is opened.
-    LaunchedEffect(date) {
-        if (Plans.plans[date] == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now())) {
-            run("Schema maken…") { Plans.generate(date) }
-        }
-    }
+    fun run(label: String, block: () -> Unit) = Plans.launch(label, block)
+    val open = Plans.openMoments(date)
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -365,9 +351,18 @@ fun PlanScreen() {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp)); Text(b)
+                    Spacer(Modifier.width(10.dp)); Text("$b (duurt ±30 sec, je kunt intussen iets anders doen)")
                 }
             }
+        }
+        if (plan == null && busy == null) item {
+            Text(
+                if (date == LocalDate.now() && open.isEmpty()) "De eetmomenten van vandaag zijn voorbij. Tik op ▶ voor morgen."
+                else if (date == LocalDate.now() && open.size < Repo.moments.size)
+                    "Ik plan alleen de momenten die nog komen (" + open.joinToString(", ") { it.second.format(HM) } + ") en houd rekening met wat je al at."
+                else "Nog geen schema voor deze dag. Geef eventueel een wens op en tik op Maak schema.",
+                color = Color.DarkGray,
+            )
         }
         error?.let { item { Text(it, color = Red) } }
 
@@ -438,7 +433,7 @@ fun PlanScreen() {
                         })
                     if (wishListening) Text("Ik luister… vertel je wens en tik op ■", fontSize = 12.sp, color = Color.DarkGray)
                     Button(onClick = { wishDictation.stop(); run("Schema maken…") { Plans.generate(date, wish) } },
-                        enabled = busy == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now()),
+                        enabled = busy == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now()) && open.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()) { Text(if (plan == null) "Maak schema" else "Maak nieuw schema") }
                 }
             }
