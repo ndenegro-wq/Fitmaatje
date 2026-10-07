@@ -88,6 +88,7 @@ object Repo {
         ctx = c.applicationContext
         prefs = ctx.getSharedPreferences("fitmaatje", Context.MODE_PRIVATE)
         load()
+        Plans.init(ctx)
     }
 
     // ---------- settings ----------
@@ -107,6 +108,7 @@ object Repo {
     var sensitivity: Int get() = prefs.getInt("sens", 2); set(v) = prefs.edit().putInt("sens", v).apply()
     var quietStart: Int get() = prefs.getInt("qs", 23); set(v) = prefs.edit().putInt("qs", v).apply()
     var quietEnd: Int get() = prefs.getInt("qe", 7); set(v) = prefs.edit().putInt("qe", v).apply()
+    var foodPrefs: String get() = s("foodPrefs", ""); set(v) = put("foodPrefs", v)
     var keywords: Boolean get() = prefs.getBoolean("kw", true); set(v) = prefs.edit().putBoolean("kw", v).apply()
     var handsfree: Boolean get() = prefs.getBoolean("hf", true); set(v) = prefs.edit().putBoolean("hf", v).apply()
     var reminders: Boolean get() = prefs.getBoolean("rem", true); set(v) = prefs.edit().putBoolean("rem", v).apply()
@@ -198,6 +200,10 @@ object Repo {
         sb.append("Doel: ").append(kcalTarget).append(" kcal, ").append(proteinTarget).append(" g eiwit per dag. Eetmomenten: ")
             .append(moments.mapIndexed { i, m -> "${i + 1}=${m.format(HM)}" }.joinToString(", ")).append('\n')
         sb.append("Protocol: ").append(protocol).append('\n')
+        Plans.plans[today]?.let { p ->
+            sb.append("Eetschema vandaag (${p.theme}): ")
+                .append(p.meals.joinToString("; ") { "${it.moment}=${it.title} ${it.kcal} kcal" }).append('\n')
+        }
         lastWeight()?.let { sb.append("Laatste gewicht: ").append(it.second).append(" kg op ").append(it.first).append('\n') }
         for (k in days - 1 downTo 0) {
             val d = today.minusDays(k.toLong())

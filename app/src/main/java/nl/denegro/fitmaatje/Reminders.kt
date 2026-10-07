@@ -56,8 +56,10 @@ object Reminders {
             "morning" -> {
                 val thursday = today.dayOfWeek == DayOfWeek.THURSDAY
                 val first = Repo.moments.firstOrNull()?.format(HM) ?: "-"
+                val plan = Plans.plans[today]
                 val text = buildString {
-                    append("Vandaag: ${Repo.kcalTarget} kcal over ${Repo.moments.size} momenten, eerste om $first. ")
+                    if (plan != null) append("Je eetschema (${plan.theme}) staat klaar: ${plan.meals.firstOrNull()?.title ?: ""} om $first. ")
+                    else append("Vandaag: ${Repo.kcalTarget} kcal over ${Repo.moments.size} momenten, eerste om $first. Open de app voor je eetschema. ")
                     if (thursday) append("Het is donderdag: weegdag! Spreek je gewicht in. ")
                     append("Welke training doe je vandaag? Spreek het even in.")
                 }
@@ -66,8 +68,12 @@ object Reminders {
             "moment" -> {
                 if (idx !in s.moments) {
                     val left = Repo.kcalTarget - s.kcal
-                    Notifs.remind(c, "Eetmoment $idx om ${Repo.moments.getOrNull(idx - 1)?.format(HM)}",
-                        "Nog $left kcal over vandaag. Spreek in wat je eet.", true)
+                    val meal = Plans.plans[today]?.meals?.firstOrNull { it.moment == idx }
+                    val text = if (meal != null)
+                        "Op je schema: ${meal.title} — " + meal.foods.joinToString(", ") { "${it.name} ${it.amount}" } +
+                            " (${meal.kcal} kcal). Gegeten? Vink het af in Schema of spreek in wat je anders at."
+                    else "Nog $left kcal over vandaag. Spreek in wat je eet."
+                    Notifs.remind(c, "Eetmoment $idx om ${Repo.moments.getOrNull(idx - 1)?.format(HM)}", text, meal == null)
                 }
             }
             "evening" -> {
@@ -83,8 +89,17 @@ object Reminders {
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {
         Repo.init(c)
-        Reminders.fire(c, intent.getStringExtra("kind") ?: "", intent.getIntExtra("idx", 0))
+        val kind = intent.getStringExtra("kind") ?: ""
+        Reminders.fire(c, kind, intent.getIntExtra("idx", 0))
         Reminders.scheduleNext(c)
+        // In the evening, prepare tomorrow's eating plan in the background.
+        val tomorrow = java.time.LocalDate.now().plusDays(1)
+        if (kind == "evening" && Repo.apiKey.isNotBlank() && Plans.plans[tomorrow] == null) {
+            val pending = goAsync()
+            Thread {
+                try { runCatching { Plans.generate(tomorrow) } } finally { pending.finish() }
+            }.start()
+        }
     }
 }
 

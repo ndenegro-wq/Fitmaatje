@@ -95,12 +95,12 @@ fun FitApp(speakRequest: Int) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var autoSpeak by remember { mutableIntStateOf(0) }
     LaunchedEffect(speakRequest) {
-        if (speakRequest > 0) { tab = 1; autoSpeak = speakRequest }
+        if (speakRequest > 0) { tab = 2; autoSpeak = speakRequest }
     }
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = Color.White) {
-                listOf("🏠" to "Vandaag", "🎤" to "Inspreken", "💬" to "Coach", "⚙️" to "Instellingen")
+                listOf("🏠" to "Vandaag", "🍽" to "Schema", "🎤" to "Inspreken", "💬" to "Coach", "⚙️" to "Instellingen")
                     .forEachIndexed { i, (icon, label) ->
                         NavigationBarItem(
                             selected = tab == i,
@@ -115,9 +115,10 @@ fun FitApp(speakRequest: Int) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> TodayScreen(onSpeak = { tab = 1; autoSpeak++ })
-                1 -> SpeakScreen(autoSpeak)
-                2 -> CoachScreen()
+                0 -> TodayScreen(onSpeak = { tab = 2; autoSpeak++ })
+                1 -> PlanScreen()
+                2 -> SpeakScreen(autoSpeak)
+                3 -> CoachScreen()
                 else -> SettingsScreen()
             }
         }
@@ -281,6 +282,136 @@ fun EntryCard(e: Entry) {
         title = { Text("Regel verwijderen?") },
         text = { Text(e.text.take(120)) },
     )
+}
+
+// ---------------------------------------------------------------- Schema
+
+@Composable
+fun PlanScreen() {
+    val scope = rememberCoroutineScope()
+    var date by remember { mutableStateOf(LocalDate.now()) }
+    val plan = Plans.plans[date]
+    var busy by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var wish by rememberSaveable { mutableStateOf("") }
+    var showShop by remember { mutableStateOf(false) }
+    val done = Repo.sum(date).moments
+    val fmt = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale("nl"))
+
+    fun run(label: String, block: () -> Unit) {
+        if (busy != null) return
+        busy = label; error = null
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching(block) }
+            busy = null
+            r.onFailure { error = it.message ?: "Er ging iets mis" }
+        }
+    }
+
+    // Make today's plan automatically the first time the screen is opened.
+    LaunchedEffect(date) {
+        if (Plans.plans[date] == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now())) {
+            run("Schema maken…") { Plans.generate(date) }
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { date = date.minusDays(1) }) { Text("◀") }
+                Text(
+                    when (date) {
+                        LocalDate.now() -> "Eetschema vandaag"
+                        LocalDate.now().plusDays(1) -> "Eetschema morgen"
+                        else -> date.format(fmt).replaceFirstChar { it.uppercase() }
+                    },
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f), textAlign = TextAlign.Center,
+                )
+                TextButton(onClick = { if (date < LocalDate.now().plusDays(1)) date = date.plusDays(1) }) { Text("▶") }
+            }
+        }
+        if (Repo.apiKey.isBlank()) item {
+            Text("Stel eerst je API-sleutel in bij Instellingen, dan maakt de coach elke dag je schema.", color = Red)
+        }
+        busy?.let { b ->
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp)); Text(b)
+                }
+            }
+        }
+        error?.let { item { Text(it, color = Red) } }
+
+        if (plan != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(plan.theme.ifBlank { "Dagmenu" }, fontWeight = FontWeight.Bold, color = GreenDark, fontSize = 18.sp)
+                        Text("${plan.kcal} kcal · ${plan.protein} g eiwit · ${done.size}/${plan.meals.size} gegeten", color = Color.DarkGray)
+                        if (plan.tip.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp)); Text("💡 ${plan.tip}", fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
+            items(plan.meals, key = { "${plan.date}-${it.moment}-${it.title}" }) { m ->
+                val eaten = m.moment in done
+                Card(colors = CardDefaults.cardColors(containerColor = if (eaten) GreenLight else Color.White)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${m.moment} · ${m.time}", fontWeight = FontWeight.Bold, color = GreenDark)
+                            Spacer(Modifier.width(8.dp))
+                            Text(m.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text("${m.kcal} kcal", fontWeight = FontWeight.Bold)
+                        }
+                        m.foods.forEach { f ->
+                            Text("• ${f.name} — ${f.amount}  (${f.kcal} kcal, ${f.protein} g eiwit)", fontSize = 14.sp)
+                        }
+                        if (m.note.isNotBlank()) Text(m.note, fontSize = 13.sp, color = Color(0xFF33691E))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                            if (eaten) Text("✓ Gegeten", color = Green, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                            else if (date == LocalDate.now()) Button(onClick = {
+                                val now = System.currentTimeMillis()
+                                Repo.add(Entry(now, now, "Volgens schema: ${m.title}", m.moment, m.foods, emptyList(), null,
+                                    "Volgens schema gegeten. Nog ${Repo.kcalTarget - Repo.sum(date).kcal - m.kcal} kcal over vandaag."))
+                            }) { Text("✓ Gegeten") }
+                            OutlinedButton(onClick = {
+                                run("Ander voorstel voor moment ${m.moment}…") { Plans.swap(plan, m.moment, wish) }
+                            }, enabled = busy == null && !eaten) { Text("↻ Iets anders") }
+                        }
+                    }
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showShop = !showShop }, modifier = Modifier.weight(1f)) {
+                        Text(if (showShop) "Verberg lijst" else "🛒 Boodschappen")
+                    }
+                }
+                if (showShop) Card(colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.padding(top = 8.dp)) {
+                    Text(Plans.shoppingList(plan), modifier = Modifier.padding(14.dp), fontSize = 14.sp)
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (plan == null) "Schema maken" else "Heel nieuw schema", fontWeight = FontWeight.Bold)
+                    OutlinedTextField(wish, { wish = it }, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Wens (optioneel), bijv. 'vandaag vis', 'uit eten 's avonds'") })
+                    Button(onClick = { run("Schema maken…") { Plans.generate(date, wish) } },
+                        enabled = busy == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now()),
+                        modifier = Modifier.fillMaxWidth()) { Text(if (plan == null) "Maak schema" else "Maak nieuw schema") }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Inspreken
@@ -498,6 +629,7 @@ fun SettingsScreen() {
     var prot by remember { mutableStateOf(Repo.proteinTarget.toString()) }
     var moments by remember { mutableStateOf(Repo.momentsCsv) }
     var protocol by remember { mutableStateOf(Repo.protocol) }
+    var foodPrefs by remember { mutableStateOf(Repo.foodPrefs) }
     var qs by remember { mutableStateOf(Repo.quietStart.toString()) }
     var qe by remember { mutableStateOf(Repo.quietEnd.toString()) }
     var reminders by remember { mutableStateOf(Repo.reminders) }
@@ -588,6 +720,8 @@ fun SettingsScreen() {
                 OutlinedTextField(moments, { moments = it }, label = { Text("Eetmomenten (bijv. 07:30,10:00,12:30)") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(protocol, { protocol = it }, label = { Text("Afspraken met je coach / protocol") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp))
+                OutlinedTextField(foodPrefs, { foodPrefs = it }, label = { Text("Wat ik lekker vind / niet eet (voor het eetschema)") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Herinneringen (ochtend, eetmomenten, avond)", modifier = Modifier.weight(1f))
                     Switch(checked = reminders, onCheckedChange = { reminders = it })
@@ -598,7 +732,7 @@ fun SettingsScreen() {
         Button(onClick = {
             Repo.apiKey = apiKey; Repo.model = model.ifBlank { "claude-sonnet-5-5" }; Repo.name = name.ifBlank { "Nick" }
             Repo.kcalTarget = kcal.toIntOrNull() ?: 1560; Repo.proteinTarget = prot.toIntOrNull() ?: 130
-            Repo.momentsCsv = moments; Repo.protocol = protocol
+            Repo.momentsCsv = moments; Repo.protocol = protocol; Repo.foodPrefs = foodPrefs
             Repo.quietStart = (qs.toIntOrNull() ?: 23).coerceIn(0, 23); Repo.quietEnd = (qe.toIntOrNull() ?: 7).coerceIn(0, 23)
             Repo.reminders = reminders
             Reminders.scheduleNext(ctx)
