@@ -296,6 +296,14 @@ fun PlanScreen() {
     var wish by rememberSaveable { mutableStateOf("") }
     var showShop by remember { mutableStateOf(false) }
     val done = Repo.sum(date).moments
+    val ctx = LocalContext.current
+    var wishListening by remember { mutableStateOf(false) }
+    val wishDictation = remember {
+        Dictation(ctx, onFinal = { t -> wish = if (wish.isBlank()) t else "$wish $t" }, onPartial = {},
+            onState = { wishListening = it }, onError = { error = it })
+    }
+    DisposableEffect(Unit) { onDispose { wishDictation.release() } }
+    val startWishMic = rememberMicPermission { wishDictation.start() }
     val fmt = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale("nl"))
 
     fun run(label: String, block: () -> Unit) {
@@ -382,6 +390,7 @@ fun PlanScreen() {
                                     "Volgens schema gegeten. Nog ${Repo.kcalTarget - Repo.sum(date).kcal - m.kcal} kcal over vandaag."))
                             }) { Text("✓ Gegeten") }
                             OutlinedButton(onClick = {
+                                wishDictation.stop()
                                 run("Ander voorstel voor moment ${m.moment}…") { Plans.swap(plan, m.moment, wish) }
                             }, enabled = busy == null && !eaten) { Text("↻ Iets anders") }
                         }
@@ -404,8 +413,16 @@ fun PlanScreen() {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (plan == null) "Schema maken" else "Heel nieuw schema", fontWeight = FontWeight.Bold)
                     OutlinedTextField(wish, { wish = it }, modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Wens (optioneel), bijv. 'vandaag vis', 'uit eten 's avonds'") })
-                    Button(onClick = { run("Schema maken…") { Plans.generate(date, wish) } },
+                        label = { Text("Wens (optioneel), bijv. 'vandaag vis', 'uit eten 's avonds'") },
+                        trailingIcon = {
+                            Box(
+                                Modifier.size(40.dp).clip(CircleShape).background(if (wishListening) Red else GreenLight)
+                                    .clickable { if (wishListening) wishDictation.stop() else startWishMic() },
+                                contentAlignment = Alignment.Center,
+                            ) { Text(if (wishListening) "■" else "🎤", color = if (wishListening) Color.White else GreenDark) }
+                        })
+                    if (wishListening) Text("Ik luister… vertel je wens en tik op ■", fontSize = 12.sp, color = Color.DarkGray)
+                    Button(onClick = { wishDictation.stop(); run("Schema maken…") { Plans.generate(date, wish) } },
                         enabled = busy == null && Repo.apiKey.isNotBlank() && !date.isBefore(LocalDate.now()),
                         modifier = Modifier.fillMaxWidth()) { Text(if (plan == null) "Maak schema" else "Maak nieuw schema") }
                 }

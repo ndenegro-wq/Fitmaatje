@@ -108,9 +108,8 @@ Antwoord met alleen één JSON-object, zonder tekst eromheen:
 {"theme":"korte naam van de eiwitfocus van vandaag","tip":"1 korte praktische tip voor vandaag",
  "meals":[{"moment":1,"time":"07:30","title":"","foods":[{"name":"","amount":"","kcal":0,"protein_g":0}],"note":"korte bereiding of tip"}]}
 """.trim()
-        val raw = Coach.call("Je bent een Nederlandse voedingscoach die nauwkeurige, haalbare dagmenu's maakt.", JSONArray().put(JSONObject().put("role", "user").put("content", user)), 3000)
-        val json = raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1)
-        val p = DayPlan.fromJson(JSONObject(json), date)
+        val o = Coach.callJson("Je bent een Nederlandse voedingscoach die nauwkeurige, haalbare dagmenu's maakt.", user, 8000)
+        val p = DayPlan.fromJson(o, date)
         if (p.meals.isEmpty()) throw RuntimeException("Leeg schema ontvangen, probeer opnieuw.")
         put(p)
         return p
@@ -128,8 +127,7 @@ ${planRules()}
 ${if (wish.isNotBlank()) "Wens: $wish" else ""}
 Antwoord met alleen één JSON-object: {"moment":$moment,"time":"${old.time}","title":"","foods":[{"name":"","amount":"","kcal":0,"protein_g":0}],"note":""}
 """.trim()
-        val raw = Coach.call("Je bent een Nederlandse voedingscoach.", JSONArray().put(JSONObject().put("role", "user").put("content", user)), 1200)
-        val m = Meal.fromJson(JSONObject(raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1)), moment).copy(moment = moment, time = old.time)
+        val m = Meal.fromJson(Coach.callJson("Je bent een Nederlandse voedingscoach.", user, 4000), moment).copy(moment = moment, time = old.time)
         val np = plan.copy(meals = plan.meals.map { if (it.moment == moment) m else it })
         put(np)
         return np

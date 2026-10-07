@@ -38,6 +38,32 @@ Dagdoel: ${Repo.kcalTarget} kcal en circa ${Repo.proteinTarget} g eiwit. Eetmome
 Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar huisarts of zijn eigen coach. Moedig nooit extreem weinig eten of overtraining aan.
 """.trim()
 
+    @Volatile var lastStop: String = ""
+
+    /**
+     * Asks for a JSON object and returns it. Retries once with more room if the model
+     * returned no JSON (e.g. it ran out of tokens while thinking).
+     */
+    fun callJson(system: String, user: String, maxTokens: Int): JSONObject {
+        var last = ""
+        for (attempt in 0..1) {
+            val tokens = if (attempt == 0) maxTokens else maxTokens * 2
+            val extra = if (attempt == 0) "" else "\n\nBELANGRIJK: antwoord direct en uitsluitend met het JSON-object, beginnend met { en eindigend met }."
+            val raw = call(system, JSONArray().put(JSONObject().put("role", "user").put("content", user + extra)), tokens)
+            last = raw
+            val a = raw.indexOf('{'); val b = raw.lastIndexOf('}')
+            if (a >= 0 && b > a) {
+                runCatching { return JSONObject(raw.substring(a, b + 1)) }
+            }
+        }
+        val why = when {
+            lastStop == "max_tokens" -> "het antwoord was te lang"
+            last.isBlank() -> "leeg antwoord (stop: ${lastStop.ifBlank { "?" }})"
+            else -> "geen geldig schema: “${last.take(120)}”"
+        }
+        throw RuntimeException("Coach gaf geen bruikbaar antwoord ($why). Probeer opnieuw of kies in Instellingen een ander model.")
+    }
+
     /** Low-level call to the Anthropic Messages API. */
     fun call(system: String, messages: JSONArray, maxTokens: Int = 1000): String {
         val key = Repo.apiKey
@@ -47,7 +73,7 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 20000
-            con.readTimeout = 120000
+            con.readTimeout = 240000
             con.setRequestProperty("content-type", "application/json")
             con.setRequestProperty("x-api-key", key)
             con.setRequestProperty("anthropic-version", "2023-06-01")
@@ -64,7 +90,9 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
                 val msg = runCatching { JSONObject(txt).getJSONObject("error").getString("message") }.getOrDefault(txt.take(300))
                 throw RuntimeException("Coach niet bereikbaar ($code): $msg")
             }
-            val arr = JSONObject(txt).getJSONArray("content")
+            val resp = JSONObject(txt)
+            lastStop = resp.optString("stop_reason")
+            val arr = resp.getJSONArray("content")
             val sb = StringBuilder()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
@@ -106,10 +134,9 @@ Regels:
 - reply: maximaal 3 korte zinnen. Bevestig wat je noteerde, noem wat er vandaag nog over is (kcal/eiwit) en geef één concrete tip. Valt eten buiten het schema of past het niet bij het plan, zeg dat vriendelijk maar eerlijk.
 - Niets herkend? Lege lijsten en een korte reply.
 """.trim()
-        val raw = call(systemPrompt(), single(user), 1200)
-        val json = raw.substring(raw.indexOf('{').coerceAtLeast(0), (raw.lastIndexOf('}') + 1).coerceAtLeast(0))
-        val o = runCatching { JSONObject(json) }.getOrElse {
-            return Entry(now, now, text, fallbackMoment, emptyList(), emptyList(), null, raw.take(400))
+        val o = runCatching { callJson(systemPrompt(), user, 4000) }.getOrElse {
+            return Entry(now, now, text, fallbackMoment, emptyList(), emptyList(), null,
+                "Opgeslagen, maar berekenen lukte niet: ${it.message}")
         }
         val fa = o.optJSONArray("foods") ?: JSONArray()
         val ea = o.optJSONArray("exercises") ?: JSONArray()
@@ -146,6 +173,7 @@ Regels:
 Antwoord kort (max ~120 woorden) tenzij om een schema of uitleg wordt gevraagd. Geen markdown-koppen of sterretjes.
 Noem je concrete oefeningen (ook in een trainingsschema), zet dan helemaal onderaan per oefening één regel in exact dit formaat:
 [[oefening: <Nederlandse naam> | <Engelse zoekterm voor een techniekvideo, bijv. "push up proper form">]]
-De app maakt daar videoknoppen van; noem die regels verder niet in je tekst.""", msgs, 1800)
+De app maakt daar videoknoppen van; noem die regels verder niet in je tekst.""", msgs, 6000)
+            .ifBlank { "Ik kreeg geen antwoord terug (stop: $lastStop). Probeer het nog eens." }
     }
 }
