@@ -6,6 +6,29 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalTime
 
+data class Video(val name: String, val query: String)
+
+/** Splits the coach's answer into visible text and exercise-video markers. */
+fun splitVideos(text: String): Pair<String, List<Video>> {
+    val re = Regex("""\[\[\s*oefening\s*:\s*([^|\]]+?)\s*(?:\|\s*([^\]]+?))?\s*]]""", RegexOption.IGNORE_CASE)
+    val vids = re.findAll(text).map { m ->
+        val name = m.groupValues[1].trim()
+        val q = m.groupValues[2].trim().trim('"', '“', '”').ifBlank { "$name techniek uitleg" }
+        Video(name, q)
+    }.distinctBy { it.name.lowercase() }.toList()
+    return re.replace(text, "").trim() to vids
+}
+
+fun openVideo(ctx: android.content.Context, query: String) {
+    val url = "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(query, "UTF-8")
+    runCatching {
+        ctx.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
 object Coach {
 
     private fun systemPrompt() = """
@@ -118,6 +141,11 @@ Regels:
         }
         if (!expectUser) msgs.put(JSONObject().put("role", "assistant").put("content", "Oké."))
         msgs.put(JSONObject().put("role", "user").put("content", "Actuele gegevens:\n${Repo.contextText(7)}\n\nVraag: $question"))
-        return call(systemPrompt() + "\nAntwoord kort (max ~120 woorden) tenzij om een schema of uitleg wordt gevraagd. Geen markdown-koppen.", msgs, 1500)
+        return call(systemPrompt() + """
+
+Antwoord kort (max ~120 woorden) tenzij om een schema of uitleg wordt gevraagd. Geen markdown-koppen of sterretjes.
+Noem je concrete oefeningen (ook in een trainingsschema), zet dan helemaal onderaan per oefening één regel in exact dit formaat:
+[[oefening: <Nederlandse naam> | <Engelse zoekterm voor een techniekvideo, bijv. "push up proper form">]]
+De app maakt daar videoknoppen van; noem die regels verder niet in je tekst.""", msgs, 1800)
     }
 }

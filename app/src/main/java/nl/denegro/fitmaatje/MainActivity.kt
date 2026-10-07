@@ -225,6 +225,7 @@ fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun EntryCard(e: Entry) {
+    val ctx = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     Card(
@@ -256,7 +257,10 @@ fun EntryCard(e: Entry) {
                 Text("• ${f.name}${if (f.amount.isNotBlank()) " (${f.amount})" else ""} — ${f.kcal} kcal, ${f.protein} g eiwit", fontSize = 14.sp)
             }
             e.exercises.forEach { x ->
-                Text("🏋 ${x.name} ${x.detail} — ${x.minutes} min, ~${x.kcal} kcal", fontSize = 14.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🏋 ${x.name} ${x.detail} — ${x.minutes} min, ~${x.kcal} kcal", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { openVideo(ctx, "${x.name} techniek uitleg") }) { Text("▶ Voorbeeld", fontSize = 12.sp) }
+                }
             }
             e.weight?.let { Text("⚖️ $it kg", fontSize = 14.sp) }
             if (e.reply.isNotBlank()) {
@@ -423,7 +427,8 @@ fun CoachScreen() {
                 Text("Vraag wat je wilt. Bijvoorbeeld:", color = Color.DarkGray)
                 listOf(
                     "Wat kan ik vanavond nog eten met wat ik over heb?",
-                    "Geef me een calisthenics-training van 20 minuten.",
+                    "Geef me een calisthenics-training van 20 minuten met voorbeelden.",
+                    "Welke oefeningen kan ik thuis doen zonder spullen?",
                     "Hoe ging mijn week?",
                 ).forEach { s ->
                     AssistChip(onClick = { input = s }, label = { Text(s) })
@@ -437,13 +442,25 @@ fun CoachScreen() {
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             items(Repo.chat) { m ->
+                val (body, videos) = if (m.fromMe) m.text to emptyList() else splitVideos(m.text)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.fromMe) Arrangement.End else Arrangement.Start) {
-                    Text(
-                        m.text,
-                        modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(14.dp))
-                            .background(if (m.fromMe) Green else Color.White).padding(12.dp),
-                        color = if (m.fromMe) Color.White else Color.Black,
-                    )
+                    Column(
+                        Modifier.widthIn(max = 310.dp).clip(RoundedCornerShape(14.dp))
+                            .background(if (m.fromMe) Green else Color.White).padding(12.dp)
+                    ) {
+                        Text(body, color = if (m.fromMe) Color.White else Color.Black)
+                        if (videos.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Bekijk hoe het moet:", fontSize = 12.sp, color = Color.DarkGray)
+                            videos.forEach { v ->
+                                OutlinedButton(
+                                    onClick = { openVideo(ctx, v.query) },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                ) { Text("▶  ${v.name}", modifier = Modifier.fillMaxWidth()) }
+                            }
+                        }
+                    }
                 }
             }
             if (busy) item { Text("Coach denkt na…", color = Color.Gray, modifier = Modifier.padding(8.dp)) }
