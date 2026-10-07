@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.FitMaatje" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#1B5E20</item>
+        <item name="android:windowBackground">#F4F7F2</item>
+    </style>
+    <color name="ic_bg">#2E7D32</color>
+</resources>
