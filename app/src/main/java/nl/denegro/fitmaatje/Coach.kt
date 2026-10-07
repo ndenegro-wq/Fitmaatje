@@ -44,12 +44,16 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
      * Asks for a JSON object and returns it. Retries once with more room if the model
      * returned no JSON (e.g. it ran out of tokens while thinking).
      */
-    fun callJson(system: String, user: String, maxTokens: Int): JSONObject {
+    fun callJson(system: String, user: String, maxTokens: Int, imageJpegB64: String? = null): JSONObject {
         var last = ""
         for (attempt in 0..1) {
             val tokens = if (attempt == 0) maxTokens else maxTokens * 2
             val extra = if (attempt == 0) "" else "\n\nBELANGRIJK: antwoord direct en uitsluitend met het JSON-object, beginnend met { en eindigend met }."
-            val raw = call(system, JSONArray().put(JSONObject().put("role", "user").put("content", user + extra)), tokens)
+            val content: Any = if (imageJpegB64 == null) user + extra else JSONArray()
+                .put(JSONObject().put("type", "image").put("source",
+                    JSONObject().put("type", "base64").put("media_type", "image/jpeg").put("data", imageJpegB64)))
+                .put(JSONObject().put("type", "text").put("text", user + extra))
+            val raw = call(system, JSONArray().put(JSONObject().put("role", "user").put("content", content)), tokens)
             last = raw
             val a = raw.indexOf('{'); val b = raw.lastIndexOf('}')
             if (a >= 0 && b > a) {
@@ -107,18 +111,31 @@ Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar
     private fun single(user: String) = JSONArray().put(JSONObject().put("role", "user").put("content", user))
 
     /** Turns a spoken/typed log into a structured Entry (blocking: call off the main thread). */
-    fun process(text: String, now: Long = System.currentTimeMillis()): Entry {
+    fun process(text: String, now: Long = System.currentTimeMillis(), photoPath: String? = null): Entry {
+        val img = photoPath?.let { p ->
+            android.util.Base64.encodeToString(java.io.File(p).readBytes(), android.util.Base64.NO_WRAP)
+        }
+        val photoNote = if (img == null) "" else """
+Er is een FOTO van het eten bijgevoegd. Herken alle onderdelen op de foto en schat de portiegroottes
+(gebruik bord, bestek, verpakking of hand als referentie). Combineer met de tekst als die er is (tekst gaat voor bij twijfel).
+Zet in reply kort dat kcal een schatting op basis van de foto is.
+""".trim()
+        return processInner(text, now, img, photoNote, photoPath)
+    }
+
+    private fun processInner(text: String, now: Long, img: String?, photoNote: String, photoPath: String?): Entry {
         val nowTime = LocalTime.now()
         val fallbackMoment = Repo.momentAt(nowTime)
         if (Repo.apiKey.isBlank()) {
             return Entry(now, now, text, fallbackMoment, emptyList(), emptyList(), null,
-                "Opgeslagen. Stel in Instellingen je API-sleutel in, dan reken ik calorieën en eiwit voor je uit.")
+                "Opgeslagen. Stel in Instellingen je API-sleutel in, dan reken ik calorieën en eiwit voor je uit.", photoPath)
         }
         val user = """
 ${Repo.contextText(2)}
 
 Ingesproken tekst van ${Repo.name}:
-«$text»
+«${text.ifBlank { "(geen tekst, alleen foto)" }}»
+$photoNote
 
 Zet dit om naar precies één JSON-object (geen tekst eromheen, geen markdown) met deze velden:
 {"foods":[{"name":"","amount":"","kcal":0,"protein_g":0}],
@@ -134,9 +151,9 @@ Regels:
 - reply: maximaal 3 korte zinnen. Bevestig wat je noteerde, noem wat er vandaag nog over is (kcal/eiwit) en geef één concrete tip. Valt eten buiten het schema of past het niet bij het plan, zeg dat vriendelijk maar eerlijk.
 - Niets herkend? Lege lijsten en een korte reply.
 """.trim()
-        val o = runCatching { callJson(systemPrompt(), user, 4000) }.getOrElse {
+        val o = runCatching { callJson(systemPrompt(), user, 4000, img) }.getOrElse {
             return Entry(now, now, text, fallbackMoment, emptyList(), emptyList(), null,
-                "Opgeslagen, maar berekenen lukte niet: ${it.message}")
+                "Opgeslagen, maar berekenen lukte niet: ${it.message}", photoPath)
         }
         val fa = o.optJSONArray("foods") ?: JSONArray()
         val ea = o.optJSONArray("exercises") ?: JSONArray()
@@ -151,7 +168,7 @@ Regels:
         val moment = if (o.isNull("moment") || !o.has("moment")) (if (foods.isNotEmpty()) fallbackMoment else null)
         else o.optInt("moment").takeIf { it in 1..Repo.moments.size }
         val weight = if (o.isNull("weight_kg") || !o.has("weight_kg")) null else o.optDouble("weight_kg").takeIf { !it.isNaN() && it > 0 }
-        return Entry(now, now, text, moment, foods, exs, weight, o.optString("reply"))
+        return Entry(now, now, text, moment, foods, exs, weight, o.optString("reply"), photoPath)
     }
 
     /** Free chat with the coach (blocking). */

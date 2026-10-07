@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
 fun FitApp(speakRequest: Int) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var autoSpeak by remember { mutableIntStateOf(0) }
+    var autoPhoto by remember { mutableIntStateOf(0) }
     LaunchedEffect(speakRequest) {
         if (speakRequest > 0) { tab = 2; autoSpeak = speakRequest }
     }
@@ -115,9 +116,9 @@ fun FitApp(speakRequest: Int) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> TodayScreen(onSpeak = { tab = 2; autoSpeak++ })
+                0 -> TodayScreen(onSpeak = { tab = 2; autoSpeak++ }, onPhoto = { tab = 2; autoPhoto++ })
                 1 -> PlanScreen()
-                2 -> SpeakScreen(autoSpeak)
+                2 -> SpeakScreen(autoSpeak, autoPhoto)
                 3 -> CoachScreen()
                 else -> SettingsScreen()
             }
@@ -128,7 +129,7 @@ fun FitApp(speakRequest: Int) {
 // ---------------------------------------------------------------- Vandaag
 
 @Composable
-fun TodayScreen(onSpeak: () -> Unit) {
+fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit) {
     var date by remember { mutableStateOf(LocalDate.now()) }
     val entries = Repo.entries.filter { it.date == date }
     val s = Repo.sum(date)
@@ -205,8 +206,13 @@ fun TodayScreen(onSpeak: () -> Unit) {
             }
         }
         item {
-            Button(onClick = onSpeak, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Text("🎤  Inspreken: eten, sport of gewicht", fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onSpeak, modifier = Modifier.weight(2f).height(56.dp)) {
+                    Text("🎤  Inspreken", fontSize = 16.sp)
+                }
+                Button(onClick = onPhoto, modifier = Modifier.weight(1.4f).height(56.dp)) {
+                    Text("📷  Foto", fontSize = 16.sp)
+                }
             }
         }
         if (entries.isEmpty()) item {
@@ -253,6 +259,15 @@ fun EntryCard(e: Entry) {
                 )
                 Spacer(Modifier.weight(1f))
                 if (e.kcal > 0) Text("${e.kcal} kcal", fontWeight = FontWeight.Bold)
+            }
+            e.photo?.let { p ->
+                Photos.thumb(p)?.let { img ->
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.foundation.Image(img, contentDescription = "Foto",
+                        modifier = Modifier.fillMaxWidth().height(if (expanded) 260.dp else 120.dp).clip(RoundedCornerShape(10.dp)),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    Spacer(Modifier.height(6.dp))
+                }
             }
             e.foods.forEach { f ->
                 Text("• ${f.name}${if (f.amount.isNotBlank()) " (${f.amount})" else ""} — ${f.kcal} kcal, ${f.protein} g eiwit", fontSize = 14.sp)
@@ -450,7 +465,7 @@ fun rememberMicPermission(onGranted: () -> Unit): () -> Unit {
 }
 
 @Composable
-fun SpeakScreen(autoSpeak: Int) {
+fun SpeakScreen(autoSpeak: Int, autoPhoto: Int = 0) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
@@ -473,18 +488,48 @@ fun SpeakScreen(autoSpeak: Int) {
     val startMic = rememberMicPermission { error = null; dictation.start() }
     LaunchedEffect(autoSpeak) { if (autoSpeak > 0) startMic() }
 
+    var photoPath by remember { mutableStateOf<String?>(null) }
+
     fun submit() {
         val t = text.trim()
-        if (t.isEmpty() || busy) return
+        val photo = photoPath
+        if ((t.isEmpty() && photo == null) || busy) return
         dictation.stop()
         busy = true; error = null
         scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { Coach.process(t) } }
+            val r = withContext(Dispatchers.IO) { runCatching { Coach.process(t, photoPath = photo) } }
             busy = false
-            r.onSuccess { e -> Repo.add(e); last = e; text = "" }
+            r.onSuccess { e -> Repo.add(e); last = e; text = ""; photoPath = null }
                 .onFailure { error = it.message ?: "Er ging iets mis" }
         }
     }
+
+    fun gotPhoto(uri: android.net.Uri) {
+        busy = true; error = null
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { Photos.store(ctx, uri) } }
+            busy = false
+            r.onSuccess { photoPath = it; submit() }.onFailure { error = "Foto mislukt: ${it.message}" }
+        }
+    }
+
+    var cameraTarget by remember { mutableStateOf<android.net.Uri?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val u = cameraTarget
+        if (ok && u != null) gotPhoto(u)
+    }
+    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u ->
+        if (u != null) gotPhoto(u)
+    }
+    fun openCamera() {
+        dictation.stop()
+        runCatching {
+            val (_, uri) = Photos.newCameraTarget(ctx)
+            cameraTarget = uri
+            camera.launch(uri)
+        }.onFailure { error = "Camera openen lukte niet: ${it.message}" }
+    }
+    LaunchedEffect(autoPhoto) { if (autoPhoto > 0) openCamera() }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -492,7 +537,7 @@ fun SpeakScreen(autoSpeak: Int) {
     ) {
         Text("Wat ga je eten of doen?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(
-            "Praat zo lang als je wilt: maaltijd, tussendoortje, training of je gewicht. Tik op stop als je klaar bent.",
+            "Praat zo lang als je wilt, of maak een foto van je bord. Je kunt ook eerst iets inspreken (bijv. 'half opgegeten') en dan de foto maken.",
             color = Color.DarkGray, textAlign = TextAlign.Center, fontSize = 14.sp,
         )
         Spacer(Modifier.height(20.dp))
@@ -508,6 +553,26 @@ fun SpeakScreen(autoSpeak: Int) {
         Text(if (listening) "Ik luister… tik om te stoppen" else "Tik om in te spreken", color = Color.DarkGray)
         if (partial.isNotBlank()) Text(partial, color = Color.Gray, fontSize = 14.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { openCamera() }, enabled = !busy, modifier = Modifier.weight(1f).height(52.dp)) { Text("📷  Foto maken") }
+            OutlinedButton(onClick = {
+                dictation.stop()
+                gallery.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }, enabled = !busy, modifier = Modifier.weight(1f).height(52.dp)) { Text("🖼  Uit galerij") }
+        }
+        photoPath?.let { p ->
+            Photos.thumb(p)?.let { img ->
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.foundation.Image(img, contentDescription = "Foto van je eten",
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            }
+        }
+        if (busy) {
+            Spacer(Modifier.height(8.dp))
+            Text(if (photoPath != null) "Foto bekijken en calorieën schatten…" else "Bezig…", color = Color.DarkGray)
+        }
+        Spacer(Modifier.height(16.dp))
         OutlinedTextField(
             value = text, onValueChange = { text = it },
             label = { Text("Jouw tekst (kun je aanpassen of typen)") },
@@ -515,8 +580,8 @@ fun SpeakScreen(autoSpeak: Int) {
         )
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { text = ""; partial = "" }, modifier = Modifier.weight(1f)) { Text("Wissen") }
-            Button(onClick = { submit() }, enabled = text.isNotBlank() && !busy, modifier = Modifier.weight(2f)) {
+            OutlinedButton(onClick = { text = ""; partial = ""; photoPath = null }, modifier = Modifier.weight(1f)) { Text("Wissen") }
+            Button(onClick = { submit() }, enabled = (text.isNotBlank() || photoPath != null) && !busy, modifier = Modifier.weight(2f)) {
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                 else Text("Opslaan & berekenen")
             }

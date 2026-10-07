@@ -27,6 +27,7 @@ data class Entry(
     val exercises: List<Ex>,
     val weight: Double?,
     val reply: String,
+    val photo: String? = null,
 ) {
     val kcal get() = foods.sumOf { it.kcal }
     val protein get() = foods.sumOf { it.protein }
@@ -44,6 +45,7 @@ data class Entry(
         })
         put("weight", weight ?: JSONObject.NULL)
         put("reply", reply)
+        put("photo", photo ?: JSONObject.NULL)
     }
 
     companion object {
@@ -65,6 +67,7 @@ data class Entry(
                 },
                 weight = if (o.isNull("weight")) null else o.optDouble("weight"),
                 reply = o.optString("reply"),
+                photo = if (o.isNull("photo")) null else o.optString("photo").ifBlank { null },
             )
         }
     }
@@ -171,7 +174,12 @@ object Repo {
     private fun onMain(f: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) f() else main.post(f) }
 
     fun add(e: Entry) = onMain { entries.add(e); entries.sortBy { it.ts }; saveEntries() }
-    fun delete(e: Entry) = onMain { entries.removeAll { it.id == e.id }; saveEntries() }
+    fun delete(e: Entry) = onMain {
+        entries.removeAll { it.id == e.id }; saveEntries()
+        e.photo?.let { runCatching { File(it).delete() } }
+    }
+
+    fun photoDir(): File = File(ctx.filesDir, "photos").apply { mkdirs() }
     fun addChat(m: ChatMsg) = onMain { chat.add(m); saveChat() }
     fun clearChat() = onMain { chat.clear(); saveChat() }
 
