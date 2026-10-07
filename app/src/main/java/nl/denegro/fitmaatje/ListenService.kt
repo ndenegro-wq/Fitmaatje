@@ -21,6 +21,15 @@ import com.google.mediapipe.tasks.audio.audioclassifier.AudioClassifier
 import com.google.mediapipe.tasks.audio.core.RunningMode
 import com.google.mediapipe.tasks.components.containers.AudioData
 import com.google.mediapipe.tasks.core.BaseOptions
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import java.io.File
 import java.time.LocalTime
 
 /**
@@ -74,6 +83,18 @@ class ListenService : Service() {
             "Television" to "tv",
             "Inside, small room" to "binnen",
         )
+
+        /** Words/phrases that make FitMaatje react when you say them. */
+        val KEYWORDS = listOf(
+            "eten", "honger", "trek", "lunch", "lunchen", "ontbijt", "ontbijten", "avondeten",
+            "snack", "tussendoortje", "hapje", "maaltijd", "dineren", "sporten", "trainen", "workout",
+        )
+        private val GRAMMAR = org.json.JSONArray(
+            KEYWORDS + listOf(
+                "ik ga eten", "ik ga nu eten", "ik heb honger", "ik heb trek", "ik ga lunchen",
+                "ik ga ontbijten", "ik ga sporten", "ik ga trainen", "[unk]",
+            )
+        ).toString()
 
         fun start(c: Context) {
             pausedUntil = 0
@@ -190,6 +211,7 @@ class ListenService : Service() {
             return
         }
 
+        prepareVosk()
         val win = 15600 // 0.975 s at 16 kHz, YAMNet's native window
         val buf = FloatArray(win)
         val format = AudioData.AudioDataFormat.builder().setNumOfChannels(1).setSampleRate(16000f).build()
@@ -229,6 +251,35 @@ class ListenService : Service() {
                 }
                 if (filled < win) continue
 
+                // ---- Spoken keywords ("ik ga eten", "honger", ...) via offline Vosk ----
+                if (vosk != null && Repo.keywords) {
+                    for (i in 0 until win) sbuf[i] = (buf[i] * 32767f).coerceIn(-32768f, 32767f).toInt().toShort()
+                    val cap = capture
+                    if (cap != null) {
+                        if (cap.acceptWaveForm(sbuf, win)) {
+                            val t = JSONObject(cap.result).optString("text").trim()
+                            if (t.isNotEmpty()) { captured.append(t).append(' '); spokeAfter = true }
+                            if (spokeAfter && now - captureStart > 3500) finishCapture()
+                        } else {
+                            val p = JSONObject(cap.partialResult).optString("partial").trim()
+                            if (p.isNotEmpty()) setHeard("🎙 $p")
+                        }
+                        if (capture != null && (now - captureStart > 25_000 || (!spokeAfter && now - captureStart > 9_000))) finishCapture()
+                        continue
+                    }
+                    val k = kwRec
+                    if (k != null && k.acceptWaveForm(sbuf, win)) {
+                        val t = JSONObject(k.result).optString("text").replace("[unk]", "").trim()
+                        if (t.isNotEmpty()) {
+                            setHeard("gezegd: “$t”")
+                            if (KEYWORDS.any { t.contains(it) } && now - lastKeyword > 45_000) {
+                                lastKeyword = now
+                                onKeyword(t)
+                            }
+                        }
+                    }
+                }
+
                 val data = AudioData.create(format, win)
                 data.load(buf)
                 val result = classifier.classify(data)
@@ -259,6 +310,106 @@ class ListenService : Service() {
         } finally {
             record?.let { runCatching { it.stop() }; it.release() }
             runCatching { classifier.close() }
+            runCatching { capture?.close() }; capture = null
+            runCatching { kwRec?.close() }; kwRec = null
+            runCatching { vosk?.close() }; vosk = null
+        }
+    }
+
+    // ------------------------------------------------------------------ keywords
+
+    private var vosk: Model? = null
+    private var kwRec: Recognizer? = null
+    private var capture: Recognizer? = null
+    private val sbuf = ShortArray(15600)
+    private val captured = StringBuilder()
+    private var captureStart = 0L
+    private var spokeAfter = false
+    private var lastKeyword = 0L
+
+    private fun prepareVosk() {
+        try {
+            val dir = File(filesDir, "vosk-nl")
+            val marker = File(dir, ".ok-1")
+            if (!marker.exists()) {
+                setStatus("Spraakmodel installeren (eenmalig)…")
+                dir.deleteRecursively()
+                copyAssets("model-nl", dir)
+                marker.writeText("ok")
+            }
+            val m = Model(dir.absolutePath)
+            vosk = m
+            kwRec = Recognizer(m, 16000f, GRAMMAR)
+        } catch (e: Throwable) {
+            vosk = null
+            setStatus("Spraakwoorden niet beschikbaar: ${e.message}")
+        }
+    }
+
+    private fun copyAssets(path: String, out: File) {
+        val list = assets.list(path) ?: emptyArray()
+        if (list.isEmpty()) {
+            out.parentFile?.mkdirs()
+            assets.open(path).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+        } else {
+            out.mkdirs()
+            list.forEach { copyAssets("$path/$it", File(out, it)) }
+        }
+    }
+
+    private fun onKeyword(said: String) {
+        ping()
+        val m = vosk
+        if (Repo.handsfree && Repo.apiKey.isNotBlank() && m != null) {
+            capture = Recognizer(m, 16000f)
+            captureStart = System.currentTimeMillis()
+            captured.setLength(0)
+            captured.append(said).append(' ')
+            spokeAfter = false
+            main.post { Notifs.capturing(this, said) }
+        } else {
+            main.post { Notifs.keywordHeard(this, said) }
+        }
+    }
+
+    private fun finishCapture() {
+        val cap = capture ?: return
+        capture = null
+        runCatching {
+            val t = JSONObject(cap.finalResult).optString("text").trim()
+            if (t.isNotEmpty()) { captured.append(t); spokeAfter = true }
+        }
+        runCatching { cap.close() }
+        kwRec?.reset()
+        val text = captured.toString().trim()
+        val said = spokeAfter
+        if (!said) {
+            main.post { Notifs.keywordHeard(this, text) }
+            return
+        }
+        ping(double = true)
+        setHeard("verwerken: “$text”")
+        Thread({
+            try {
+                val e = Coach.process("$text (handsfree ingesproken)")
+                Repo.add(e)
+                main.post { Notifs.logged(this, e) }
+            } catch (ex: Throwable) {
+                main.post { Notifs.remind(this, "Niet gelukt om te loggen", "“$text” — ${ex.message}. Tik om het in de app in te spreken.", true) }
+            }
+        }, "fitmaatje-log").start()
+    }
+
+    private fun ping(double: Boolean = false) {
+        runCatching {
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+            tg.startTone(if (double) ToneGenerator.TONE_PROP_ACK else ToneGenerator.TONE_PROP_BEEP, 250)
+            main.postDelayed({ tg.release() }, 800)
+        }
+        runCatching {
+            val v = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java).defaultVibrator
+            else @Suppress("DEPRECATION") getSystemService(Vibrator::class.java)
+            v.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }

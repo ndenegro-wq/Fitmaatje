@@ -107,6 +107,8 @@ object Repo {
     var sensitivity: Int get() = prefs.getInt("sens", 2); set(v) = prefs.edit().putInt("sens", v).apply()
     var quietStart: Int get() = prefs.getInt("qs", 23); set(v) = prefs.edit().putInt("qs", v).apply()
     var quietEnd: Int get() = prefs.getInt("qe", 7); set(v) = prefs.edit().putInt("qe", v).apply()
+    var keywords: Boolean get() = prefs.getBoolean("kw", true); set(v) = prefs.edit().putBoolean("kw", v).apply()
+    var handsfree: Boolean get() = prefs.getBoolean("hf", true); set(v) = prefs.edit().putBoolean("hf", v).apply()
     var reminders: Boolean get() = prefs.getBoolean("rem", true); set(v) = prefs.edit().putBoolean("rem", v).apply()
 
     val moments: List<LocalTime>

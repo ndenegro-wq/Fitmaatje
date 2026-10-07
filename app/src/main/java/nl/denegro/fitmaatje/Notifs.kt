@@ -97,6 +97,60 @@ object Notifs {
         runCatching { NotificationManagerCompat.from(c).notify(ID_EAT, n) }
     }
 
+    private fun popup(c: Context, title: String, text: String, speak: Boolean, req: Int): NotificationCompat.Builder =
+        NotificationCompat.Builder(c, CH_EAT)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(openApp(c, speak, req))
+            .setFullScreenIntent(openApp(c, speak, req + 1), true)
+
+    /** You said a keyword; tap to open the app and talk. */
+    fun keywordHeard(c: Context, said: String) {
+        if (!canPost(c)) return
+        val n = popup(c, "Ik hoorde “$said”", "Wat ga je eten of doen? Tik en spreek het in.", true, 40)
+            .addAction(0, "Inspreken", openApp(c, true, 42))
+            .addAction(0, "Niet nu", serviceAction(c, ListenService.ACTION_NO, 43))
+            .build()
+        runCatching { NotificationManagerCompat.from(c).notify(ID_EAT, n) }
+    }
+
+    /** Hands-free: FitMaatje is now listening to what you eat. */
+    fun capturing(c: Context, said: String) {
+        if (!canPost(c)) return
+        val n = popup(c, "Ik luister… (“$said”)", "Vertel gewoon wat je eet of gaat doen. Ik noteer het zelf.", true, 50)
+            .setAutoCancel(false)
+            .setTimeoutAfter(30_000)
+            .build()
+        runCatching { NotificationManagerCompat.from(c).notify(ID_EAT, n) }
+    }
+
+    fun logged(c: Context, e: Entry) {
+        if (!canPost(c)) return
+        val what = buildList {
+            if (e.foods.isNotEmpty()) add(e.foods.joinToString(", ") { it.name } + " — ${e.kcal} kcal")
+            if (e.exercises.isNotEmpty()) add(e.exercises.joinToString(", ") { it.name })
+            e.weight?.let { add("$it kg") }
+        }.joinToString(" · ")
+        val left = Repo.kcalTarget - Repo.sum(java.time.LocalDate.now()).kcal
+        val title = if (what.isNotBlank()) "Genoteerd: $what" else "Genoteerd"
+        val text = (e.reply.ifBlank { "Nog $left kcal over vandaag." }) + "\n\nKlopt het niet? Tik om aan te passen."
+        val n = NotificationCompat.Builder(c, CH_EAT)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openApp(c, false, 60))
+            .build()
+        runCatching { NotificationManagerCompat.from(c).notify(ID_EAT, n) }
+    }
+
     fun remind(c: Context, title: String, text: String, speak: Boolean) {
         if (!canPost(c)) return
         val n = NotificationCompat.Builder(c, CH_REMIND)

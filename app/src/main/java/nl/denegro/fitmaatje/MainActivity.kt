@@ -472,6 +472,8 @@ fun SettingsScreen() {
     val ctx = LocalContext.current
     var listening by remember { mutableStateOf(Repo.listening && ListenService.running) }
     var sens by remember { mutableFloatStateOf(Repo.sensitivity.toFloat()) }
+    var kw by remember { mutableStateOf(Repo.keywords) }
+    var hf by remember { mutableStateOf(Repo.handsfree) }
     var apiKey by remember { mutableStateOf(Repo.apiKey) }
     var model by remember { mutableStateOf(Repo.model) }
     var name by remember { mutableStateOf(Repo.name) }
@@ -501,7 +503,7 @@ fun SettingsScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Meeluisteren", fontWeight = FontWeight.Bold)
-                        Text("Hoort wanneer je gaat eten. Geluid wordt alleen op je telefoon herkend, nooit opgenomen of verstuurd.",
+                        Text("Hoort eetgeluiden en wat je zegt. Alles wordt op je telefoon herkend, nooit opgenomen. Alleen bij handsfree loggen gaat de tekst (niet het geluid) naar de coach.",
                             fontSize = 12.sp, color = Color.DarkGray)
                     }
                     Switch(checked = listening, onCheckedChange = { on ->
@@ -510,7 +512,23 @@ fun SettingsScreen() {
                 }
                 Text("Status: ${ListenService.status.value}", fontSize = 13.sp)
                 Text("Hoort nu: ${ListenService.heard.value}", fontSize = 13.sp, color = Color.DarkGray)
-                Text("Gevoeligheid: " + when (sens.toInt()) { 1 -> "laag (minder valse meldingen)"; 2 -> "normaal"; else -> "hoog (mist minder)" }, fontSize = 13.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Reageren als ik iets zeg", fontWeight = FontWeight.Medium)
+                        Text("Ping + pop-up bij o.a. “ik ga eten”, “honger”, “trek”, “lunch”, “ontbijt”, “snack”, “sporten”.",
+                            fontSize = 12.sp, color = Color.DarkGray)
+                    }
+                    Switch(checked = kw, onCheckedChange = { kw = it; Repo.keywords = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Handsfree loggen", fontWeight = FontWeight.Medium)
+                        Text("Na de ping gewoon doorpraten (“…twee boterhammen met kaas”). FitMaatje noteert het zelf.",
+                            fontSize = 12.sp, color = Color.DarkGray)
+                    }
+                    Switch(checked = hf, onCheckedChange = { hf = it; Repo.handsfree = it })
+                }
+                Text("Gevoeligheid eetgeluiden: " + when (sens.toInt()) { 1 -> "laag (minder valse meldingen)"; 2 -> "normaal"; else -> "hoog (mist minder)" }, fontSize = 13.sp)
                 Slider(value = sens, onValueChange = { sens = it; Repo.sensitivity = it.toInt() }, valueRange = 1f..3f, steps = 1)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(qs, { qs = it.filter(Char::isDigit).take(2) }, label = { Text("Nachtrust vanaf (uur)") },
