@@ -45,11 +45,11 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private val Green = Color(0xFF2E7D32)
-private val GreenDark = Color(0xFF1B5E20)
-private val GreenLight = Color(0xFFE8F5E9)
-private val Amber = Color(0xFFF9A825)
-private val Red = Color(0xFFC62828)
+internal val Green = Color(0xFF2E7D32)
+internal val GreenDark = Color(0xFF1B5E20)
+internal val GreenLight = Color(0xFFE8F5E9)
+internal val Amber = Color(0xFFF9A825)
+internal val Red = Color(0xFFC62828)
 
 private val scheme = lightColorScheme(
     primary = Green,
@@ -63,14 +63,16 @@ private val scheme = lightColorScheme(
 
 class MainActivity : ComponentActivity() {
     private val speakRequest = mutableIntStateOf(0)
+    private val checkRequest = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Repo.init(this)
         if (intent?.getBooleanExtra("speak", false) == true) speakRequest.intValue++
+        intent?.getStringExtra("check")?.let { checkRequest.value = it }
         setContent {
             MaterialTheme(colorScheme = scheme) {
-                FitApp(speakRequest.intValue)
+                FitApp(speakRequest.intValue, checkRequest.value) { checkRequest.value = null }
             }
         }
     }
@@ -78,6 +80,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra("speak", false)) speakRequest.intValue++
+        intent.getStringExtra("check")?.let { checkRequest.value = it }
     }
 
     override fun onResume() {
@@ -91,7 +94,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun FitApp(speakRequest: Int) {
+fun FitApp(speakRequest: Int, checkRequest: String? = null, onCheckHandled: () -> Unit = {}) {
+    var sheet by remember { mutableStateOf<String?>(null) }   // "help", "morning", "evening"
+    var settingsKey by remember { mutableIntStateOf(0) }
+    LaunchedEffect(checkRequest) { if (checkRequest != null) { sheet = checkRequest; onCheckHandled() } }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var autoSpeak by remember { mutableIntStateOf(0) }
     var autoPhoto by remember { mutableIntStateOf(0) }
@@ -101,7 +107,7 @@ fun FitApp(speakRequest: Int) {
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = Color.White) {
-                listOf("🏠" to "Vandaag", "🍽" to "Schema", "🎤" to "Inspreken", "💬" to "Coach", "⚙️" to "Instellingen")
+                listOf("🏠" to "Vandaag", "🍽" to "Schema", "🎤" to "Inspreken", "💬" to "Team", "⚙️" to "Instellingen")
                     .forEachIndexed { i, (icon, label) ->
                         NavigationBarItem(
                             selected = tab == i,
@@ -112,24 +118,38 @@ fun FitApp(speakRequest: Int) {
                     }
             }
         },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { sheet = "help" },
+                containerColor = Color(0xFFE65100), contentColor = Color.White,
+                text = { Text("Ik heb het moeilijk", fontWeight = FontWeight.Bold) },
+                icon = { Text("🆘") },
+            )
+        },
         containerColor = MaterialTheme.colorScheme.background,
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> TodayScreen(onSpeak = { tab = 2; autoSpeak++ }, onPhoto = { tab = 2; autoPhoto++ })
+                0 -> TodayScreen(onSpeak = { tab = 2; autoSpeak++ }, onPhoto = { tab = 2; autoPhoto++ },
+                    onCheck = { sheet = it }, onAskNoor = { tab = 3; Talk.ask("Bespreek mijn voortgang op basis van mijn gelogde gegevens en tussendoelen. Benoem wat nog ontbreekt.", "noor") },
+                    onProfile = { tab = 4 })
                 1 -> PlanScreen()
                 2 -> SpeakScreen(autoSpeak, autoPhoto)
-                3 -> CoachScreen()
-                else -> SettingsScreen()
+                3 -> CoachScreen(onHelp = { sheet = "help" }, onCheck = { sheet = it })
+                else -> key(settingsKey) { SettingsScreen(onImported = { settingsKey++ }) }
             }
         }
+    }
+    when (sheet) {
+        "help" -> HelpSheet(onClose = { sheet = null }, onLog = { tab = 2 }, onDiscuss = { q -> tab = 3; Talk.ask(q, "emma") })
+        "morning", "evening" -> CheckSheet(sheet!!, onClose = { sheet = null }, onDiscuss = { q, c -> tab = 3; Talk.ask(q, c) })
     }
 }
 
 // ---------------------------------------------------------------- Vandaag
 
 @Composable
-fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit) {
+fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit, onCheck: (String) -> Unit = {}, onAskNoor: () -> Unit = {}, onProfile: () -> Unit = {}) {
     var date by remember { mutableStateOf(LocalDate.now()) }
     val entries = Repo.entries.filter { it.date == date }
     val s = Repo.sum(date)
@@ -139,7 +159,7 @@ fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
     ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -178,6 +198,7 @@ fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit) {
                 }
             }
         }
+        if (date == LocalDate.now()) item { DayRhythmCard(onCheck) }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
                 Column(Modifier.padding(16.dp)) {
@@ -205,6 +226,7 @@ fun TodayScreen(onSpeak: () -> Unit, onPhoto: () -> Unit) {
                 }
             }
         }
+        if (date == LocalDate.now()) item { ProgressCard(onAskNoor, onProfile) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSpeak, modifier = Modifier.weight(2f).height(56.dp)) {
@@ -244,6 +266,10 @@ fun EntryCard(e: Entry) {
                 Text(e.time, fontWeight = FontWeight.Bold, color = GreenDark)
                 Spacer(Modifier.width(8.dp))
                 val tag = when {
+                    e.kind == "checkin" -> if (e.type == "morning") "☀️ Ochtendcheck" else "🌙 Avondcheck"
+                    e.kind == "craving" -> "🆘 " + Team.help(e.type).label
+                    e.kind == "walk" -> "🚶 Wandelen"
+                    e.kind == "note" -> "Notitie"
                     e.foods.isNotEmpty() && e.moment != null -> "Moment ${e.moment}"
                     e.foods.isNotEmpty() -> "Buiten schema"
                     e.exercises.isNotEmpty() -> "Sport"
@@ -327,7 +353,7 @@ fun PlanScreen() {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
     ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -596,59 +622,57 @@ fun SpeakScreen(autoSpeak: Int, autoPhoto: Int = 0) {
 // ---------------------------------------------------------------- Coach
 
 @Composable
-fun CoachScreen() {
+fun CoachScreen(onHelp: () -> Unit = {}, onCheck: (String) -> Unit = {}) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     var input by rememberSaveable { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
+    val busy = Talk.busy.value
+    var active by remember { mutableStateOf(Repo.activeCoach) }
     var listening by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val dictation = remember {
         Dictation(ctx, onFinal = { t -> input = if (input.isBlank()) t else "$input $t" }, onPartial = {},
-            onState = { listening = it }, onError = { Repo.addChat(ChatMsg(false, it)) })
+            onState = { listening = it }, onError = { toast(ctx, it) })
     }
     DisposableEffect(Unit) { onDispose { dictation.release() } }
     val startMic = rememberMicPermission { dictation.start() }
-    LaunchedEffect(Repo.chat.size) { if (Repo.chat.isNotEmpty()) listState.animateScrollToItem(Repo.chat.size - 1) }
+    LaunchedEffect(Repo.chat.size, busy) { if (Repo.chat.isNotEmpty()) listState.animateScrollToItem(Repo.chat.size - 1 + if (busy) 1 else 0) }
+    val role = Team.coach(active)
 
     fun send() {
         val q = input.trim()
         if (q.isEmpty() || busy) return
         dictation.stop()
         input = ""
-        Repo.addChat(ChatMsg(true, q))
-        busy = true
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { Coach.ask(q) } }
-            busy = false
-            Repo.addChat(ChatMsg(false, r.getOrElse { it.message ?: "Er ging iets mis" }))
-        }
+        Talk.ask(q, active)
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp, 8.dp, 0.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Coach", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp, 8.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Mijn coachteam", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             TextButton(onClick = { Repo.clearChat() }) { Text("Wissen") }
         }
-        if (Repo.chat.isEmpty()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Vraag wat je wilt. Bijvoorbeeld:", color = Color.DarkGray)
-                listOf(
-                    "Wat kan ik vanavond nog eten met wat ik over heb?",
-                    "Geef me een calisthenics-training van 20 minuten met voorbeelden.",
-                    "Welke oefeningen kan ik thuis doen zonder spullen?",
-                    "Hoe ging mijn week?",
-                ).forEach { s ->
-                    AssistChip(onClick = { input = s }, label = { Text(s) })
-                }
-            }
-        }
+        CoachPicker(active) { active = it; Repo.activeCoach = it }
+        Text("${role.emoji} ${role.name} · ${role.role} — ${role.task}", fontSize = 12.sp, color = Color.DarkGray,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
         ) {
+            if (Repo.chat.isEmpty()) item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Eén gedeeld gesprek: alle coaches kennen je dagboek, check-ins en voortgang. Begin bijvoorbeeld met:", color = Color.DarkGray, fontSize = 14.sp)
+                    AssistChip(onClick = { onCheck(if (java.time.LocalTime.now().hour < 14) "morning" else "evening") },
+                        label = { Text(if (java.time.LocalTime.now().hour < 14) "☀️ Ochtendcheck met Ayse" else "🌙 Avondcheck met Emma") })
+                    AssistChip(onClick = onHelp, label = { Text("🆘 Ik heb trek in zoet") })
+                    listOf(
+                        "sara" to "Wat kan ik vanavond nog eten met wat ik over heb?",
+                        "milan" to "Hoe bouw ik mijn wandelingen deze week rustig op?",
+                        "noor" to "Hoe gaat het met mijn tussendoelen?",
+                    ).forEach { (c, q) -> AssistChip(onClick = { active = c; Repo.activeCoach = c; input = q }, label = { Text("${Team.coach(c).name}: $q") }) }
+                }
+            }
             items(Repo.chat) { m ->
                 val (body, videos) = if (m.fromMe) m.text to emptyList() else splitVideos(m.text)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.fromMe) Arrangement.End else Arrangement.Start) {
@@ -656,6 +680,10 @@ fun CoachScreen() {
                         Modifier.widthIn(max = 310.dp).clip(RoundedCornerShape(14.dp))
                             .background(if (m.fromMe) Green else Color.White).padding(12.dp)
                     ) {
+                        if (!m.fromMe && m.coach != null) {
+                            val c = Team.COACHES.firstOrNull { it.name == m.coach }
+                            Text("${c?.emoji ?: ""} ${m.coach}".trim(), fontWeight = FontWeight.Bold, color = GreenDark, fontSize = 13.sp)
+                        }
                         Text(body, color = if (m.fromMe) Color.White else Color.Black)
                         if (videos.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
@@ -671,7 +699,7 @@ fun CoachScreen() {
                     }
                 }
             }
-            if (busy) item { Text("Coach denkt na…", color = Color.Gray, modifier = Modifier.padding(8.dp)) }
+            if (busy) item { Text("${role.name} denkt na… (je kunt intussen iets anders doen)", color = Color.Gray, modifier = Modifier.padding(8.dp)) }
         }
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -682,7 +710,7 @@ fun CoachScreen() {
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(
                 value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
-                placeholder = { Text("Typ of spreek je vraag") }, maxLines = 4,
+                placeholder = { Text("Vraag het ${role.name}") }, maxLines = 4,
             )
             Spacer(Modifier.width(8.dp))
             Button(onClick = { send() }, enabled = input.isNotBlank() && !busy) { Text("➤") }
@@ -693,7 +721,7 @@ fun CoachScreen() {
 // ---------------------------------------------------------------- Instellingen
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onImported: () -> Unit = {}) {
     val ctx = LocalContext.current
     var listening by remember { mutableStateOf(Repo.listening && ListenService.running) }
     var sens by remember { mutableFloatStateOf(Repo.sensitivity.toFloat()) }
@@ -723,6 +751,9 @@ fun SettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Instellingen", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        ProfileCard()
+        ImportCard(onImported = onImported)
+        ChatGptCard()
 
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -787,7 +818,6 @@ fun SettingsScreen() {
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Jouw plan", fontWeight = FontWeight.Bold)
-                OutlinedTextField(name, { name = it }, label = { Text("Naam") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(kcal, { kcal = it.filter(Char::isDigit) }, label = { Text("kcal per dag") }, modifier = Modifier.weight(1f),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
@@ -807,7 +837,7 @@ fun SettingsScreen() {
         }
 
         Button(onClick = {
-            Repo.apiKey = apiKey; Repo.model = model.ifBlank { "claude-sonnet-5-5" }; Repo.name = name.ifBlank { "Nick" }
+            Repo.apiKey = apiKey; Repo.model = model.ifBlank { "claude-sonnet-5-5" }; Unit
             Repo.kcalTarget = kcal.toIntOrNull() ?: 1560; Repo.proteinTarget = prot.toIntOrNull() ?: 130
             Repo.momentsCsv = moments; Repo.protocol = protocol; Repo.foodPrefs = foodPrefs
             Repo.quietStart = (qs.toIntOrNull() ?: 23).coerceIn(0, 23); Repo.quietEnd = (qe.toIntOrNull() ?: 7).coerceIn(0, 23)

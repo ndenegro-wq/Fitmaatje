@@ -63,7 +63,8 @@ object Reminders {
                     if (thursday) append("Het is donderdag: weegdag! Spreek je gewicht in. ")
                     append("Welke training doe je vandaag? Spreek het even in.")
                 }
-                Notifs.remind(c, if (thursday) "Goedemorgen ${Repo.name} — weegdag" else "Goedemorgen ${Repo.name}", text, true)
+                Notifs.remindCheck(c, if (thursday) "Goedemorgen ${Repo.name} — weegdag" else "Goedemorgen ${Repo.name}",
+                    "☀️ Doe je ochtendcheck (1 minuut), dan maakt Ayse je dagplan. " + text, "morning")
             }
             "moment" -> {
                 if (idx !in s.moments) {
@@ -80,7 +81,9 @@ object Reminders {
                 val text = "Vandaag ${s.kcal} van ${Repo.kcalTarget} kcal, ${s.protein} g eiwit, " +
                     "${s.moments.size}/${Repo.moments.size} momenten, ${s.sportMin} min sport. " +
                     if (s.kcal == 0) "Nog niets gelogd? Spreek je dag even kort in." else "Goed bezig, morgen weer!"
-                Notifs.remind(c, "Je dag in het kort", text, s.kcal == 0)
+                if (Repo.checkin(today, "evening") == null)
+                    Notifs.remindCheck(c, "🌙 Tijd voor je avondcheck", "$text Emma helpt je met één stap voor morgen.", "evening")
+                else Notifs.remind(c, "Je dag in het kort", text, s.kcal == 0)
             }
         }
     }

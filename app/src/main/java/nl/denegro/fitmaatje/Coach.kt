@@ -36,6 +36,7 @@ Je bent FitMaatje, de persoonlijke voedings- en sportcoach van ${Repo.name}. Je 
 Hij werkt aan gezond afvallen met dit plan: ${Repo.protocol}
 Dagdoel: ${Repo.kcalTarget} kcal en circa ${Repo.proteinTarget} g eiwit. Eetmomenten: ${Repo.moments.mapIndexed { i, m -> "${i + 1}=${m.format(HM)}" }.joinToString(", ")}.
 Je bent een coach, geen arts: bij klachten, duizeligheid of pijn verwijs je naar huisarts of zijn eigen coach. Moedig nooit extreem weinig eten of overtraining aan.
+${Team.teamPrompt()}
 """.trim()
 
     @Volatile var lastStop: String = ""
@@ -200,7 +201,8 @@ Regels:
     }
 
     /** Free chat with the coach (blocking). */
-    fun ask(question: String): String {
+    fun ask(question: String, coachId: String = Repo.activeCoach): String {
+        val role = Team.coach(coachId)
         val history = Repo.chat.takeLast(10)
         val msgs = JSONArray()
         // Messages must alternate and start with user.
@@ -213,7 +215,7 @@ Regels:
         }
         if (!expectUser) msgs.put(JSONObject().put("role", "assistant").put("content", "Oké."))
         msgs.put(JSONObject().put("role", "user").put("content", "Actuele gegevens:\n${Repo.contextText(7)}\n\nVraag: $question"))
-        return call(systemPrompt() + """
+        return call(systemPrompt() + "\nJe neemt nu de AI-coachrol ${role.name} (${role.role}) aan. Taak: ${role.task} Begin niet met je naam." + """
 
 Antwoord kort (max ~120 woorden) tenzij om een schema of uitleg wordt gevraagd. Geen markdown-koppen of sterretjes.
 Noem je concrete oefeningen (ook in een trainingsschema), zet dan helemaal onderaan per oefening één regel in exact dit formaat:

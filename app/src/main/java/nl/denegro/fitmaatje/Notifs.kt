@@ -151,6 +151,25 @@ object Notifs {
         runCatching { NotificationManagerCompat.from(c).notify(ID_EAT, n) }
     }
 
+    fun remindCheck(c: Context, title: String, text: String, check: String) {
+        if (!canPost(c)) return
+        val i = Intent(c, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("check", check)
+        }
+        val pi = PendingIntent.getActivity(c, if (check == "morning") 70 else 71, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = NotificationCompat.Builder(c, CH_REMIND)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .addAction(0, if (check == "morning") "Ochtendcheck" else "Avondcheck", pi)
+            .build()
+        runCatching { NotificationManagerCompat.from(c).notify(ID_REMIND, n) }
+    }
+
     fun remind(c: Context, title: String, text: String, speak: Boolean) {
         if (!canPost(c)) return
         val n = NotificationCompat.Builder(c, CH_REMIND)

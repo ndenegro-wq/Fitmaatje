@@ -28,6 +28,11 @@ data class Entry(
     val weight: Double?,
     val reply: String,
     val photo: String? = null,
+    /** null = normale log; "checkin", "craving", "walk" of "note". */
+    val kind: String? = null,
+    /** bij checkin: "morning"/"evening"; bij craving: hulp-type. */
+    val type: String? = null,
+    val source: String? = null,
 ) {
     val kcal get() = foods.sumOf { it.kcal }
     val protein get() = foods.sumOf { it.protein }
@@ -46,6 +51,7 @@ data class Entry(
         put("weight", weight ?: JSONObject.NULL)
         put("reply", reply)
         put("photo", photo ?: JSONObject.NULL)
+        put("kind", kind ?: JSONObject.NULL); put("type", type ?: JSONObject.NULL); put("source", source ?: JSONObject.NULL)
     }
 
     companion object {
@@ -68,12 +74,15 @@ data class Entry(
                 weight = if (o.isNull("weight")) null else o.optDouble("weight"),
                 reply = o.optString("reply"),
                 photo = if (o.isNull("photo")) null else o.optString("photo").ifBlank { null },
+                kind = if (o.isNull("kind")) null else o.optString("kind").ifBlank { null },
+                type = if (o.isNull("type")) null else o.optString("type").ifBlank { null },
+                source = if (o.isNull("source")) null else o.optString("source").ifBlank { null },
             )
         }
     }
 }
 
-data class ChatMsg(val fromMe: Boolean, val text: String)
+data class ChatMsg(val fromMe: Boolean, val text: String, val coach: String? = null)
 
 data class DaySum(val kcal: Int, val protein: Int, val sportMin: Int, val sportKcal: Int, val moments: Set<Int>)
 
@@ -114,6 +123,13 @@ object Repo {
     var foodPrefs: String get() = s("foodPrefs", ""); set(v) = put("foodPrefs", v)
     var keywords: Boolean get() = prefs.getBoolean("kw", true); set(v) = prefs.edit().putBoolean("kw", v).apply()
     var handsfree: Boolean get() = prefs.getBoolean("hf", true); set(v) = prefs.edit().putBoolean("hf", v).apply()
+    // ---------- profiel (alleen lokaal op de telefoon) ----------
+    var heightCm: String get() = s("heightCm", ""); set(v) = put("heightCm", v.trim())
+    var startWeight: String get() = s("startWeight", ""); set(v) = put("startWeight", v.trim().replace(',', '.'))
+    var goalWeight: String get() = s("goalWeight", ""); set(v) = put("goalWeight", v.trim().replace(',', '.'))
+    var startDate: String get() = s("startDate", ""); set(v) = put("startDate", v.trim())
+    var healthNotes: String get() = s("healthNotes", ""); set(v) = put("healthNotes", v.trim())
+    var activeCoach: String get() = s("coach", "ayse"); set(v) = put("coach", v)
     var reminders: Boolean get() = prefs.getBoolean("rem", true); set(v) = prefs.edit().putBoolean("rem", v).apply()
 
     val moments: List<LocalTime>
@@ -155,7 +171,7 @@ object Repo {
             if (chatFile.exists()) {
                 val a = JSONArray(chatFile.readText())
                 for (i in 0 until a.length()) {
-                    val o = a.getJSONObject(i); chat.add(ChatMsg(o.getBoolean("me"), o.getString("t")))
+                    val o = a.getJSONObject(i); chat.add(ChatMsg(o.getBoolean("me"), o.getString("t"), o.optString("c").ifBlank { null }))
                 }
             }
         }
@@ -167,7 +183,7 @@ object Repo {
     }
 
     private fun saveChat() {
-        val a = JSONArray(); chat.takeLast(60).forEach { a.put(JSONObject().put("me", it.fromMe).put("t", it.text)) }
+        val a = JSONArray(); chat.takeLast(80).forEach { a.put(JSONObject().put("me", it.fromMe).put("t", it.text).put("c", it.coach ?: "")) }
         chatFile.writeText(a.toString())
     }
 
@@ -184,6 +200,17 @@ object Repo {
     fun clearChat() = onMain { chat.clear(); saveChat() }
 
     fun day(d: LocalDate): List<Entry> = entries.filter { it.date == d }
+    fun checkin(d: LocalDate, type: String): Entry? = day(d).lastOrNull { it.kind == "checkin" && it.type == type }
+    fun cravings(d: LocalDate): List<Entry> = day(d).filter { it.kind == "craving" }
+    fun addAll(list: List<Entry>) = onMain {
+        val ids = entries.map { it.id }.toHashSet()
+        list.forEach { if (it.id !in ids) entries.add(it) }
+        entries.sortBy { it.ts }; saveEntries()
+    }
+    fun exportJson(): String {
+        val a = JSONArray(); entries.forEach { a.put(it.toJson()) }
+        return JSONObject().put("app", "FitMaatje-Android").put("entries", a).put("profile", Team.profileJson()).toString(1)
+    }
 
     fun sum(d: LocalDate): DaySum {
         val l = day(d)
@@ -213,6 +240,7 @@ object Repo {
                 .append(p.meals.joinToString("; ") { "${it.moment}=${it.title} ${it.kcal} kcal" }).append('\n')
         }
         lastWeight()?.let { sb.append("Laatste gewicht: ").append(it.second).append(" kg op ").append(it.first).append('\n') }
+        Team.progressLine().takeIf { it.isNotBlank() }?.let { sb.append(it).append('\n') }
         for (k in days - 1 downTo 0) {
             val d = today.minusDays(k.toLong())
             val l = day(d)
@@ -220,12 +248,19 @@ object Repo {
             val s = sum(d)
             sb.append("\n").append(if (k == 0) "VANDAAG" else d.toString()).append(": ")
                 .append(s.kcal).append(" kcal, ").append(s.protein).append(" g eiwit, sport ").append(s.sportMin)
-                .append(" min, momenten ").append(s.moments.sorted().joinToString(",")).append('\n')
+                .append(" min, momenten ").append(s.moments.sorted().joinToString(","))
+                .append(", zoete-trek/hulp ").append(l.count { it.kind == "craving" }).append("x, check-ins ")
+                .append(l.filter { it.kind == "checkin" }.joinToString("+") { if (it.type == "morning") "ochtend" else "avond" }.ifBlank { "geen" })
+                .append('\n')
             if (k <= 1) l.forEach { e ->
                 sb.append("  ").append(e.time).append(" ")
                 if (e.foods.isNotEmpty()) sb.append(e.foods.joinToString("; ") { "${it.name} ${it.amount} (${it.kcal} kcal)" }).append(' ')
                 if (e.exercises.isNotEmpty()) sb.append("sport: ").append(e.exercises.joinToString("; ") { "${it.name} ${it.detail} ${it.minutes} min" }).append(' ')
-                e.weight?.let { sb.append("gewicht ").append(it).append(" kg") }
+                e.weight?.let { sb.append("gewicht ").append(it).append(" kg ") }
+                when (e.kind) {
+                    "checkin", "note" -> sb.append("[").append(e.text).append(if (e.kind == "note" && e.reply.isNotBlank()) ": " + e.reply else "").append("]")
+                    "craving" -> sb.append("[hulpknop: ").append(e.type).append(", ").append(e.text).append("]")
+                }
                 sb.append('\n')
             }
         }
