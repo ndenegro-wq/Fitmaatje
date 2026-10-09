@@ -15,7 +15,7 @@ object Team {
     val COACHES = listOf(
         CoachRole("ayse", "Ayse", "Coördinatie", "🧭", "Maak één overzichtelijk dagplan. Stem voeding, bewegen en motivatie op elkaar af."),
         CoachRole("sara", "Sara", "Voeding", "🥗", "Help met gewone vullende maaltijden, porties en praktische alternatieven bij zoete trek."),
-        CoachRole("milan", "Milan", "Beweging", "🚶", "Maak bewegen haalbaar, bouw wandelen rustig op. Vraag naar beperkingen; geen strafsport of zware oefeningen bij pijn."),
+        CoachRole("milan", "Milan", "Beweging", "🚶", "Maak bewegen haalbaar, bouw wandelen rustig op en moedig lenigheid aan. In de app staan twee begeleide lenigheidsroutines (knop 🧘 Lenigheid op Vandaag): ochtend ±5 min en avond ±10 min. Vraag naar beperkingen; geen strafsport of zware oefeningen bij pijn."),
         CoachRole("emma", "Emma", "Motivatie", "💛", "Help zonder oordeel bij zoete trek, stress en terugval. Kies één kleine volgende stap."),
         CoachRole("noor", "Noor", "Voortgang", "📈", "Bespreek werkelijk gelogde gewichtstrends over meerdere weken en de tussendoelen. Geen dieetwijziging op basis van één uitschieter."),
     )

@@ -142,6 +142,7 @@ fun FitApp(speakRequest: Int, checkRequest: String? = null, onCheckHandled: () -
     }
     when (sheet) {
         "help" -> HelpSheet(onClose = { sheet = null }, onLog = { tab = 2 }, onDiscuss = { q -> tab = 3; Talk.ask(q, "emma") })
+        "stretch" -> StretchSheet(onClose = { sheet = null })
         "morning", "evening" -> CheckSheet(sheet!!, onClose = { sheet = null }, onDiscuss = { q, c -> tab = 3; Talk.ask(q, c) })
     }
 }
@@ -269,6 +270,7 @@ fun EntryCard(e: Entry) {
                     e.kind == "checkin" -> if (e.type == "morning") "☀️ Ochtendcheck" else "🌙 Avondcheck"
                     e.kind == "craving" -> "🆘 " + Team.help(e.type).label
                     e.kind == "walk" -> "🚶 Wandelen"
+                    e.kind == "stretch" -> "🧘 Lenigheid"
                     e.kind == "note" -> "Notitie"
                     e.foods.isNotEmpty() && e.moment != null -> "Moment ${e.moment}"
                     e.foods.isNotEmpty() -> "Buiten schema"
@@ -669,6 +671,7 @@ fun CoachScreen(onHelp: () -> Unit = {}, onCheck: (String) -> Unit = {}) {
                     listOf(
                         "sara" to "Wat kan ik vanavond nog eten met wat ik over heb?",
                         "milan" to "Hoe bouw ik mijn wandelingen deze week rustig op?",
+                        "milan" to "Welke lenigheidsroutine past vandaag bij mij?",
                         "noor" to "Hoe gaat het met mijn tussendoelen?",
                     ).forEach { (c, q) -> AssistChip(onClick = { active = c; Repo.activeCoach = c; input = q }, label = { Text("${Team.coach(c).name}: $q") }) }
                 }

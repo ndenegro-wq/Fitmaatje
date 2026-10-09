@@ -234,7 +234,10 @@ fun DayRhythmCard(onCheck: (String) -> Unit) {
                 AssistChip(onClick = { onCheck("morning") }, label = { Text("☀️ Ochtendcheck" + if (m != null) " (opnieuw)" else "") })
                 AssistChip(onClick = { onCheck("evening") }, label = { Text("🌙 Avondcheck" + if (e != null) " (opnieuw)" else "") })
             }
-            OutlinedButton(onClick = { askWalk = true }, modifier = Modifier.fillMaxWidth()) { Text("🚶 Wandeling loggen") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { askWalk = true }, modifier = Modifier.weight(1f)) { Text("🚶 Wandeling") }
+                OutlinedButton(onClick = { onCheck("stretch") }, modifier = Modifier.weight(1f)) { Text("🧘 Lenigheid") }
+            }
         }
     }
     if (askWalk) {
